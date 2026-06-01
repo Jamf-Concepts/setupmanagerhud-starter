@@ -1,0 +1,7 @@
+node_modules/
+public/
+migrations/
+.wrangler/
+.dev.vars
+AGENTS.md
+backups/
