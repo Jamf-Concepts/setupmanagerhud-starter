@@ -1,6 +1,4 @@
 node_modules/
-public/
-migrations/
 .wrangler/
 .dev.vars
 AGENTS.md
@@ -8,3 +6,5 @@ backups/
 .agents/
 .claude/
 skills-lock.json
+coverage/
+frontend/dist/

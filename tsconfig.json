@@ -3,9 +3,13 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
-    "types": ["@cloudflare/workers-types"]
+    "esModuleInterop": true,
+    "types": ["node"],
+    "jsx": "react-jsx"
   },
-  "include": ["src"]
+  "include": ["src", "frontend/src", "test"]
 }
