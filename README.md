@@ -1,92 +1,131 @@
 # Setup Manager HUD
 
-Real-time webhook dashboard for [Setup Manager](https://github.com/jamf/setup-manager).
+A webhook dashboard for [Jamf Setup Manager](https://github.com/jamf/setup-manager). It receives enrollment events from Setup Manager as they happen, stores them, and shows them in a live-updating dashboard.
 
-## Quick Start
+| Dark Mode | Light Mode |
+|-----------|------------|
+| ![Dark Mode](docs/assets/setupmanagerhud-dark.png) | ![Light Mode](docs/assets/setupmanagerhud-light.png) |
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Jamf-Concepts/setupmanagerhud-starter)
+## What It Does
 
-### 1. Generate A Webhook Token
+- Receives webhook events from Setup Manager when devices enroll
+- Stores every enrollment — start time, finish time, macOS version, hardware model, success or failure
+- Shows a dashboard with charts, stats, and a searchable/filterable table
+- Lets you hide test or noise enrollments without deleting them
 
-Run this on your Mac before you open the Deploy Button:
+## Pick a Deployment Option
+
+You don't need to be a developer to deploy this. Choose the option that matches where you want to run it:
+
+| Option | Best for | Cost | Requires |
+|--------|----------|------|----------|
+| **[Docker / docker-compose](docs/deploy/container.md)** | A server or VM you already have | Your existing server costs | Docker installed on a Linux/Mac machine |
+| **[Fly.io](docs/deploy/fly.md)** | Managed cloud, no server to maintain | ~$3–5/month | A free Fly.io account |
+| **[Cloudflare Workers](docs/deploy/cloudflare.md)** | Serverless, scales to zero | Free tier likely sufficient | A free Cloudflare account |
+
+> Not sure which to pick? If you have a Mac or Linux server already running at your org, use Docker. If you want something managed with no server to maintain, Fly.io is the simplest paid option. If you want free and serverless, use Cloudflare Workers.
+
+## Before You Deploy (Any Option)
+
+**Generate a webhook token.** This is a random secret that only Setup Manager and your dashboard know. Run this on your Mac:
 
 ```bash
 openssl rand -hex 24
 ```
 
-Save this token. You need the exact same value in Cloudflare and Setup Manager.
-Cloudflare hides Worker secrets after they are saved.
+Save the output somewhere safe — like a password manager. You'll use it in two places:
+1. When you deploy the dashboard (as `WEBHOOK_TOKEN`)
+2. When you configure Setup Manager webhooks (as the `token` value)
 
-### 2. Deploy To Cloudflare
+If you lose it, you generate a new one and update both sides.
 
-When the Deploy Button opens Cloudflare, paste your generated token into the
-required `WEBHOOK_TOKEN` secret field. This is the shared token that Setup
-Manager must send with every webhook request.
+## Deploy Guides
 
-The template includes `.dev.vars.example` so Cloudflare's Deploy Button shows
-`WEBHOOK_TOKEN` during setup. `wrangler.toml` also declares this as a required
-secret, so manual deploys fail clearly if the token has not been configured.
+- **[Docker / docker-compose](docs/deploy/container.md)** — run on any machine with Docker
+- **[Fly.io](docs/deploy/fly.md)** — managed cloud, always-on, ~$3–5/month
+- **[Cloudflare Workers](docs/deploy/cloudflare.md)** — serverless, uses Cloudflare D1 for storage
 
-### 3. Save These Values
+## After Deploying
 
-After Cloudflare deploys the Worker, save:
+### Configure Setup Manager
 
-- `WEBHOOK_TOKEN`: the token you generated
-- Dashboard URL: the Worker URL Cloudflare gives you
-- Webhook URL: the same Worker URL with `/webhook` at the end
+Add the webhook URL and your token to each webhook in your Setup Manager configuration plist:
 
-Example:
-
-```text
-Dashboard URL: https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev
-Webhook URL:   https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/webhook
+```xml
+<key>webhooks</key>
+<dict>
+  <key>started</key>
+  <dict>
+    <key>url</key>
+    <string>https://YOUR-DASHBOARD-URL/webhook</string>
+    <key>token</key>
+    <string>paste-your-webhook-token-here</string>
+  </dict>
+  <key>finished</key>
+  <dict>
+    <key>url</key>
+    <string>https://YOUR-DASHBOARD-URL/webhook</string>
+    <key>token</key>
+    <string>paste-your-webhook-token-here</string>
+  </dict>
+</dict>
 ```
 
-Then check health:
+Replace `YOUR-DASHBOARD-URL` with the URL from your deployment, and `paste-your-webhook-token-here` with the token you generated.
 
-```text
-https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/health
-```
+### Verify It's Working
 
-The dashboard is ready when D1 and Durable Objects both show connected.
-
-### 4. Configure Setup Manager
-
-Add the webhook URL and token to your Setup Manager configuration plist. See
-[Getting Started](docs/getting-started.md) for the full setup flow and
-[Security](docs/security.md) for the complete plist example.
-
-Cloudflare Access is optional. It protects people viewing the dashboard, but it
-does not replace the required `WEBHOOK_TOKEN` for Setup Manager webhooks.
-
-## Dashboard Views
-
-The dashboard opens in the **Active** view. Use **Disabled** for test, demo, or
-noise enrollments that you want to hide from the main operational dashboard.
-Disabled rows stay stored in D1 and can be enabled again later.
-
-## Upgrading
-
-When the dashboard shows that an update is available, update the Git repository
-created for your deployment and push the change so Cloudflare rebuilds it. See
-[Upgrading Setup Manager HUD](docs/upgrading.md) for the step-by-step guide.
-
-## Local Development
+Check the health endpoint in a browser or terminal:
 
 ```bash
-npm install
-npm run sync
-npm run dev
+curl https://YOUR-DASHBOARD-URL/api/health
 ```
+
+A healthy response looks like:
+
+```json
+{"status":"ok","db":"ok"}
+```
+
+Then send a test event to confirm the token is wired up correctly (replace the URL and token):
+
+```bash
+curl -X POST https://YOUR-DASHBOARD-URL/webhook \
+  -H "Authorization: Bearer your-token-here" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Started","event":"com.jamf.setupmanager.started","timestamp":"2025-01-01T00:00:00Z","started":"2025-01-01T00:00:00Z","modelName":"Test Mac","modelIdentifier":"Mac15,3","macOSBuild":"24A335","macOSVersion":"15.0","serialNumber":"TEST001","setupManagerVersion":"2.0.0"}'
+```
+
+- **200 OK** — token matched, event stored. Refresh the dashboard.
+- **401 Unauthorized** — token mismatch. Double-check both sides have exactly the same value.
+- **503 Service Unavailable** — database not reachable. See [Troubleshooting](docs/troubleshooting.md).
+
+## Dashboard
+
+The dashboard auto-refreshes every few seconds. No manual reload needed.
+
+**Active** shows current enrollments. **Disabled** shows ones you've hidden.
+
+To hide a noisy test enrollment from the Active view, click **Disable** on that row. It moves to Disabled and stays in storage — it's not deleted. You can re-enable it any time.
+
+## Optional: Customize the Dashboard
+
+You can set a custom title and logo by adding environment variables when you deploy:
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `APP_TITLE` | Title shown in the top nav | `Acme Corp Enrollments` |
+| `LOGO_URL` | URL to a logo image | `https://example.com/logo.png` |
+
+See your deploy guide for how to set these.
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md)
-- [Docs index](docs/README.md)
-- [Configuration](docs/configuration.md)
-- [Security](docs/security.md)
+- [Docker / container deploy](docs/deploy/container.md)
+- [Fly.io deploy](docs/deploy/fly.md)
+- [Cloudflare Workers deploy](docs/deploy/cloudflare.md)
+- [Configuration reference](docs/configuration.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Upgrading](docs/upgrading.md)
 
 ## License
 

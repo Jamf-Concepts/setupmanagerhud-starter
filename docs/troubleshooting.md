@@ -1,12 +1,8 @@
 # Troubleshooting
 
-Common issues and their solutions. Each section follows the format: Problem, Cause, Solution.
+Common issues and how to fix them. Each section describes the symptom, the likely cause, and the steps to resolve it.
 
-Examples use this placeholder dashboard URL:
-
-```text
-https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev
-```
+Examples use `YOUR-DASHBOARD-URL` as a placeholder. Replace it with your actual dashboard URL.
 
 ---
 
@@ -14,429 +10,222 @@ https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev
 
 ### Webhooks return 401 Unauthorized
 
-**Problem:** Setup Manager devices receive 401 errors when posting to `/webhook`.
+**Symptom:** Setup Manager devices get 401 errors. The dashboard receives no events.
 
-**Cause:** The token in your Setup Manager plist doesn't match the `WEBHOOK_TOKEN` configured on your Worker, or the device is not sending an `Authorization` header.
+**Cause:** The `WEBHOOK_TOKEN` in Setup Manager doesn't exactly match the one configured in your deployment.
 
-**Solution:**
+**Fix:**
 
-1. Verify your Worker has a secret set:
+1. Confirm your deployment has `WEBHOOK_TOKEN` set:
+
+   **Docker:** Check the environment — run `docker compose ps` and verify the container is running with the token set. Restart with `WEBHOOK_TOKEN=your-token docker compose up`.
+
+   **Fly.io:**
+   ```bash
+   fly secrets list
+   # Should show WEBHOOK_TOKEN in the list
+   ```
+
+   **Cloudflare Workers:**
    ```bash
    npx wrangler secret list
-   # Should show: WEBHOOK_TOKEN
+   # Should show WEBHOOK_TOKEN
    ```
 
-2. If missing, set it:
+2. If it's missing, set it:
+
+   **Fly.io:** `fly secrets set WEBHOOK_TOKEN=your-token`  
+   **Cloudflare:** `npx wrangler secret put WEBHOOK_TOKEN`
+
+3. Check your Setup Manager plist. The `token` value must be exactly the same string — same capitalisation, no extra spaces, no line breaks.
+
+4. Test manually to isolate the issue (replace the URL and token):
+
    ```bash
-   npx wrangler secret put WEBHOOK_TOKEN
-   ```
-
-3. Verify your plist `token` value matches **exactly** (including any trailing whitespace)
-
-4. Redeploy the configuration profile to your devices
-
-5. Test manually:
-   ```bash
-   curl -X POST https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/webhook \
+   curl -X POST https://YOUR-DASHBOARD-URL/webhook \
      -H "Authorization: Bearer your-token-here" \
      -H "Content-Type: application/json" \
      -d '{"name":"Started","event":"com.jamf.setupmanager.started","timestamp":"2025-01-01T00:00:00Z","started":"2025-01-01T00:00:00Z","modelName":"Test Mac","modelIdentifier":"Mac15,3","macOSBuild":"24A335","macOSVersion":"15.0","serialNumber":"TEST001","setupManagerVersion":"2.0.0"}'
    ```
 
-Setup Manager sends the token as a raw `Authorization: <token>` header. Curl
-examples use `Authorization: Bearer <token>` because the Worker accepts both
-forms for manual testing.
-
-See [Security](security.md) for complete webhook token setup.
-
----
-
-### Webhooks return 403 Forbidden
-
-**Problem:** All webhook POSTs are blocked with 403 errors.
-
-**Cause:** Cloudflare Access is protecting the `/webhook` path without a bypass policy.
-
-**Solution:**
-
-1. In Cloudflare Zero Trust, go to **Access -> Applications**
-2. Open your Setup Manager HUD application
-3. Go to the **Policies** tab
-4. Add a new policy:
-   - Policy name: `Bypass webhook`
-   - Action: `Bypass`
-   - Include: `Everyone`
-   - Path: `/webhook`
-5. **Drag this policy ABOVE the Allow policy** (Bypass policies must be evaluated first)
-6. Save
-
-Test:
-```bash
-curl -X POST https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/webhook \
-  -H "Authorization: Bearer your-token-here" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Started","event":"com.jamf.setupmanager.started","timestamp":"2025-01-01T00:00:00Z","started":"2025-01-01T00:00:00Z","modelName":"Test Mac","modelIdentifier":"Mac15,3","macOSBuild":"24A335","macOSVersion":"15.0","serialNumber":"TEST001","setupManagerVersion":"2.0.0"}'
-# Should return 200, not 403
-```
+   - **200 OK** — token is correct. If Setup Manager still fails, the plist token doesn't match.
+   - **401** — the token you used in the curl is wrong. Fix the deployment token and redeploy.
 
 ---
 
 ### Webhooks return 503 Service Unavailable
 
-**Problem:** Webhook POSTs return a 503 configuration error.
+**Symptom:** Webhook POST requests return a 503 error.
 
-**Cause:** D1 database is not bound to the Worker, migrations have not been applied, or the binding name is incorrect.
+**Cause:** The database is not reachable.
 
-**Solution:**
+**Fix:**
 
-1. Check health endpoint:
+1. Check the health endpoint:
    ```bash
-   curl https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/health
+   curl https://YOUR-DASHBOARD-URL/api/health
    ```
 
-2. If `d1` shows `not configured` or `error`:
-   - Verify D1 database exists in Cloudflare dashboard
-   - Verify binding variable name is exactly `DB`
-   - Verify migrations have been applied
-   - Rebind via dashboard or `wrangler.toml`
+2. If `"db"` is not `"ok"`, the database needs attention:
 
-See [Configuration - D1 Database](configuration.md#d1-database-required) for setup steps.
+   **Docker:** Confirm the `hud-data` volume is mounted. Run `docker compose down` then `docker compose up` again with `WEBHOOK_TOKEN` set.
+
+   **Fly.io:** Confirm the volume exists: `fly volumes list`. If the volume is missing, create it: `fly volumes create hud_data --size 1` then redeploy: `fly deploy`.
+
+   **Cloudflare Workers:** Confirm the D1 database exists and its ID is in `wrangler.toml`. Run `wrangler d1 list` to see your databases. Apply migrations if you haven't: `wrangler d1 migrations apply DB --remote`. Then redeploy: `npm run deploy:cf`.
 
 ---
 
-## WebSocket Issues
+### Events aren't appearing on the dashboard
 
-### Dashboard shows "Disconnected" or events don't appear in real-time
+**Symptom:** Webhooks return 200 OK but the dashboard stays empty.
 
-**Problem:** Dashboard connects but shows "Disconnected" status, or new events don't appear without refreshing.
+**Cause and fix — work through this checklist:**
 
-**Cause:** WebSocket connection failed or was blocked.
-
-**Solution:**
-
-1. Check the browser console for WebSocket errors:
-   - Chrome: **View -> Developer -> JavaScript Console**
-   - Safari: enable the Develop menu, then open **Develop -> Show JavaScript Console**
-
-2. If using Cloudflare Access, verify the Access cookie is valid:
-   - Open dashboard in browser (should prompt for login)
-   - After login, WebSocket should connect
-
-3. Check if a proxy or firewall is blocking WebSocket connections:
+1. **Confirm the event was actually stored.** Call the events API directly:
    ```bash
-   # Test WebSocket upgrade
-   curl -i -N \
-     -H "Connection: Upgrade" \
-     -H "Upgrade: websocket" \
-     -H "Sec-WebSocket-Version: 13" \
-     -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-     https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/ws
-   # Should return 101 Switching Protocols
+   curl https://YOUR-DASHBOARD-URL/api/events
+   ```
+   If you see events in the JSON response but not the dashboard, it's a browser issue — try a hard refresh (Cmd+Shift+R on Mac).
+
+2. **Check the health endpoint.** The database must be `"ok"`:
+   ```bash
+   curl https://YOUR-DASHBOARD-URL/api/health
    ```
 
-4. If on corporate network, try from a different network to isolate the issue
+3. **Check your webhook payload.** The `serialNumber` and `started` fields are required. A missing field causes a `400 Bad Request` (not a 200).
+
+4. **Wait a moment.** The dashboard polls for new events every few seconds. If you just sent a webhook, give it 5–10 seconds and check again.
 
 ---
 
-### Events appear briefly then disappear
+## Dashboard Issues
 
-**Problem:** Events show up in the dashboard, then vanish after a few seconds.
+### Dashboard won't load / blank page
 
-**Cause:** Dashboard is receiving events from the WebSocket but failing to persist them in component state.
+**Symptom:** Opening the dashboard URL shows a blank page or a browser error.
 
-**Solution:**
+**Fix:**
 
-1. Open the browser JavaScript console and look for errors
-2. Hard refresh: Ctrl+Shift+R (Windows/Linux) or Cmd+Shift+R (Mac)
-3. Clear browser cache and local storage for the domain
-4. Try a different browser to isolate browser-specific issues
+**Docker:** Confirm the container is running — `docker compose ps` should show it as `Up`. Check logs: `docker compose logs hud`.
+
+**Fly.io:** Check the app is running — `fly status`. View logs: `fly logs`.
+
+**Cloudflare Workers:** Open the Cloudflare dashboard, go to Workers & Pages, and check that the Worker deployed successfully. Look at the deployment logs for errors.
 
 ---
 
-## D1 Database Issues
+### Dashboard shows "Service Degraded" or "Service Warning" banner
 
-### Health check shows "d1": "not configured"
+**Symptom:** The dashboard loads but shows a warning banner at the top.
 
-**Problem:** The `/api/health` endpoint shows D1 as not configured.
+**Cause:** The health check reported the database as degraded.
 
-**Cause:** D1 database binding is missing from the Worker.
+**Fix:** Run `curl https://YOUR-DASHBOARD-URL/api/health` and check the `db` field. Then follow the database troubleshooting steps above for your deployment option.
 
-**Solution:**
+---
 
-1. Verify D1 database exists:
-   ```bash
-   npx wrangler d1 list
+### Disable / Enable button does nothing or shows an error
+
+**Symptom:** Clicking **Disable** or **Enable** on an enrollment row appears to fail.
+
+**Fix:**
+
+1. Open the browser's developer console (in Chrome: View → Developer → JavaScript Console) and look for error messages.
+2. Hard refresh the page (Cmd+Shift+R on Mac) to clear any cached JavaScript.
+3. Check the health endpoint to confirm the database is reachable.
+
+---
+
+## Fly.io Issues
+
+### App goes to sleep and data is lost
+
+**Symptom:** The Fly.io app stopped and the database is gone.
+
+**Cause:** This should not happen with the default `fly.toml` — it sets `auto_stop_machines = false` and `min_machines_running = 1`. If data was lost, the volume may have been deleted separately.
+
+**Fix:**
+
+1. Check the volume still exists: `fly volumes list`
+2. If the volume is missing, you'll need to create a new one and redeploy (data recovery is not possible without a backup).
+3. Confirm your `fly.toml` has the always-on settings:
+   ```toml
+   [http_service]
+     auto_stop_machines = false
+     min_machines_running = 1
    ```
+4. Redeploy if the settings were wrong: `fly deploy`
 
-2. Verify binding in `wrangler.toml`:
+---
+
+### fly deploy fails: "No machines found"
+
+**Symptom:** `fly deploy` reports an error about no machines.
+
+**Fix:** This happens on a brand-new app before any machines exist. Run `fly launch --no-deploy` first to create the app configuration, then create your volume, set secrets, and run `fly deploy`. See [Fly.io deploy guide](deploy/fly.md) for the full sequence.
+
+---
+
+## Cloudflare Workers Issues
+
+### Workers deploy fails: database ID not found
+
+**Symptom:** `npm run deploy:cf` fails with an error about the D1 database.
+
+**Fix:**
+
+1. Create the database if you haven't: `wrangler d1 create setupmanagerhud-events`
+2. Copy the `database_id` UUID from the output
+3. Paste it into `wrangler.toml`:
    ```toml
    [[d1_databases]]
    binding = "DB"
    database_name = "setupmanagerhud-events"
-   database_id = "your-d1-database-id"
+   database_id = "paste-uuid-here"
    ```
-
-3. Redeploy:
-   ```bash
-   npm run deploy
-   ```
-
-4. Or rebind via dashboard (see [Configuration - D1 Database](configuration.md#d1-database-required))
+4. Redeploy: `npm run deploy:cf`
 
 ---
 
-### Health check shows "d1": "error"
+### Local development: `wrangler dev` doesn't show events
 
-**Problem:** D1 is bound but returning errors.
+**Symptom:** You run `wrangler dev` but the local dashboard doesn't receive events.
 
-**Cause:** Database ID mismatch, database was deleted, or migrations have not been applied.
+**Fix:**
 
-**Solution:**
-
-1. List databases and verify ID:
-   ```bash
-   npx wrangler d1 list
+1. Make sure `.dev.vars` exists with your local token:
    ```
-
-2. Compare with `wrangler.toml` - IDs must match exactly
-
-3. Apply migrations:
-   ```bash
-   npx wrangler d1 migrations apply DB --remote
+   WEBHOOK_TOKEN=local-test-token
    ```
-
-4. If the database was deleted, create a new one and update the binding
+2. Build the frontend first: `npm run build:frontend`
+3. Send test events to `http://localhost:8787/webhook` (not your production URL) with the local token.
 
 ---
 
-### Dashboard shows a storage warning
+## General
 
-**Problem:** The dashboard loads but shows "Storage configuration needs attention."
+### Need to start fresh
 
-**Cause:** `/api/health` reports D1 or Durable Objects as degraded.
+If you want to wipe all stored enrollments and start over:
 
-**Solution:**
+**Docker:** `docker compose down -v` removes the container and the data volume. Then bring it back up.
 
-1. Open the health endpoint after authenticating through Cloudflare Access:
-   ```bash
-   curl https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/health
-   ```
-
-2. Verify `"d1": "connected"`.
-
-3. Verify `"durable_objects": "connected"`.
-
-4. If D1 is degraded, recheck the `DB` binding and apply migrations with `--remote`.
-
-5. If Durable Objects are degraded, verify the `DASHBOARD_ROOM` binding and migration in `wrangler.toml`.
-
----
-
-### Storage warning says D1 is connected and Durable Objects are error
-
-**Problem:** The dashboard says D1 is connected, but Durable Objects are in error.
-
-**Cause:** The D1 database is working, but the Worker cannot create or reach the
-`DASHBOARD_ROOM` Durable Object. This usually means the Durable Object binding
-or migration is missing from the deployed Worker configuration.
-
-**Solution:**
-
-1. Verify `wrangler.toml` contains both Durable Object sections:
-   ```toml
-   [[durable_objects.bindings]]
-   name = "DASHBOARD_ROOM"
-   class_name = "DashboardRoom"
-
-   [[migrations]]
-   tag = "v1"
-   new_sqlite_classes = ["DashboardRoom"]
-   ```
-
-2. Confirm Cloudflare deployed from the repository and commit you expect.
-
-3. If using Cloudflare Git integration, push a commit and wait for a successful
-   Cloudflare deployment.
-
-4. If using GitHub Actions, remember that this starter validates on push but
-   deploys only when you manually run **Actions -> Deploy to Cloudflare Workers
-   -> Run workflow**.
-
-5. If deploying from your Mac, run:
-   ```bash
-   npm run build
-   npx wrangler deploy
-   ```
-
-6. Recheck health:
-   ```bash
-   curl https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/health
-   ```
-
----
-
-## Cloudflare Access Issues
-
-### Dashboard redirects to login loop
-
-**Problem:** Accessing the dashboard redirects to Cloudflare Access login, but after logging in, redirects back to login again.
-
-**Cause:** JWT validation in the Worker is failing, possibly due to misconfigured `CF_ACCESS_AUD` or `CF_ACCESS_TEAM_DOMAIN`.
-
-**Solution:**
-
-1. Verify `wrangler.toml` has correct values:
-   ```toml
-   [vars]
-   CF_ACCESS_AUD = "your-audience-tag"
-   CF_ACCESS_TEAM_DOMAIN = "your-team.cloudflareaccess.com"
-   ```
-
-2. Find your Audience tag:
-   - Zero Trust dashboard -> Access -> Applications
-   - Click your application -> Overview tab
-   - Copy the "Application Audience (AUD) Tag"
-
-3. Find your Team domain:
-   - Zero Trust dashboard -> Settings -> Custom Pages
-   - Your team domain is shown at the top
-
-4. Redeploy after updating:
-   ```bash
-   npm run deploy
-   ```
-
-5. If you test with `curl`, expect unauthenticated dashboard/API requests to return `302` from Cloudflare Access or `403` from the Worker. A `403` response should still include the standard security headers.
-
----
-
-### Dashboard accessible without login (unprotected)
-
-**Problem:** Dashboard loads without prompting for Cloudflare Access login.
-
-**Cause:** Cloudflare Access is optional. If you expected a login prompt, the Access application is not configured, or `CF_ACCESS_*` variables are not set for Worker-side JWT validation.
-
-**Solution:**
-
-1. Verify Access application exists:
-   - Zero Trust dashboard -> Access -> Applications
-   - Should see your application listed
-
-2. Verify `wrangler.toml` has both variables set (not empty):
-   ```toml
-   [vars]
-   CF_ACCESS_AUD = "..."  # Not empty
-   CF_ACCESS_TEAM_DOMAIN = "..."  # Not empty
-   ```
-
-3. Redeploy if variables were missing
-
-See [Security - Cloudflare Access](security.md#cloudflare-access-optional-dashboard-authentication) for complete setup.
-
----
-
-## General Issues
-
-### Events not appearing on dashboard
-
-**Problem:** Webhooks return 200 but events don't show on dashboard.
-
-**Cause:** Multiple possible causes - use this checklist.
-
-**Solution:**
-
-1. **Check WebSocket connection:** Dashboard should show "Connected" status
-
-2. **Check D1 storage:** Health endpoint should show `"d1": "connected"`
-
-3. **Check browser console:** Look for JavaScript errors
-
-4. **Check event payload:** Ensure webhooks have all required fields:
-   - `name`, `event`, `timestamp`, `started` (for started events)
-   - `name`, `event`, `timestamp`, `started`, `finished` (for finished events)
-
-5. **Test with curl:** Send a test event and watch the dashboard:
-   ```bash
-   curl -X POST https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/webhook \
-     -H "Authorization: Bearer your-token-here" \
-     -H "Content-Type: application/json" \
-     -d '{"name":"Started","event":"com.jamf.setupmanager.started","timestamp":"2025-01-01T00:00:00Z","started":"2025-01-01T00:00:00Z","modelName":"Test Mac","modelIdentifier":"Mac15,3","macOSBuild":"24A335","macOSVersion":"15.0","serialNumber":"TEST001","setupManagerVersion":"2.0.0"}'
-   ```
-
----
-
-### Disable or Enable fails
-
-**Problem:** Clicking **Disable** or **Enable** shows an error toast, or the
-browser console reports that a dashboard request was blocked.
-
-**Cause:** Older dashboard bundles used blocker-sensitive URLs such as
-`/api/events/.../archive` or `/api/events/.../disabled`. Core `1.2.5` moved
-dashboard visibility changes to neutral records endpoints.
-
-**Solution:**
-
-1. Confirm the live Worker is running `1.2.5` or newer:
-   ```bash
-   curl https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/api/config
-   ```
-
-2. Hard refresh the dashboard:
-   - Chrome, Edge, or Firefox on Mac: **Command-Shift-R**
-   - Safari: **Option-Command-R**, or use **Develop -> Empty Caches**
-
-3. If the browser console still shows `/api/events/.../archive` or
-   `/api/events/.../disabled`, the browser is using an old cached dashboard
-   bundle. Clear site data for the Worker domain and reload.
-
-4. If `/api/config` still reports an older version, finish the upgrade and wait
-   for Cloudflare to deploy the pushed commit. See [Upgrading](upgrading.md).
-
-Disabled rows are hidden from the Active record list; they are not deleted from
-D1 and can be enabled again from the Disabled view.
-
----
-
-### Need sample data for testing
-
-Use the CSV-based test sender from the repository root:
-
+**Fly.io:** You can delete and recreate the volume, but this is destructive and permanent:
 ```bash
-WORKER_URL=https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev \
-WEBHOOK_TOKEN=your-token-here \
-scripts/send-test-events.sh
+fly volumes list
+fly volumes delete vol_xxxx  # replace with your volume ID
+fly volumes create hud_data --size 1
+fly deploy
 ```
 
-The sample device CSV is [examples/test-devices.csv](../examples/test-devices.csv).
-You can edit serial numbers, macOS versions, hardware models, and computer
-names before running the script. Its columns are:
-
-```csv
-serial,macos_version,model_name,model_identifier,computer_name
-```
-
-The sample application CSV is
-[examples/test-applications.csv](../examples/test-applications.csv). Edit it to
-change the application names used as enrollment actions. It is a simple `name`
-column. The default apps are Microsoft Outlook, Google Chrome, Microsoft Teams,
-Zoom, SAP Privileges, Jamf Trust, and Jamf Protect.
-
-To validate the CSV files and event count without posting data:
-
-```bash
-DRY_RUN=1 \
-WORKER_URL=https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev \
-WEBHOOK_TOKEN=your-token-here \
-scripts/send-test-events.sh
-```
-
-Useful options include `DAYS`, `ENROLLMENTS_PER_DEVICE`, `FAILURE_RATE`, and
-`FAILED_APPLICATION`. Failed enrollments mark only `FAILED_APPLICATION` as
-failed and use slow network throughput.
+**Cloudflare D1:** Delete and recreate the database in the Cloudflare dashboard (Workers & Pages → D1 → your database → Delete), then re-run `npm run deploy:cf`.
 
 ---
 
 ### Need more help?
 
-- Check the [GitHub Issues](https://github.com/motionbug/setupmanagerhud-starter/issues) for similar problems
-- Open a new issue with your error details, health check output, and relevant logs
+Check the [GitHub Issues](https://github.com/Jamf-Concepts/setupmanagerhud-starter/issues) for similar problems, or open a new issue with:
+- Which deployment option you're using (Docker / Fly.io / Cloudflare)
+- The output of `curl https://YOUR-DASHBOARD-URL/api/health`
+- Any error messages from your deployment logs

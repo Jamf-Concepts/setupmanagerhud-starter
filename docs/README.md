@@ -1,20 +1,15 @@
-# Setup Manager HUD Docs
-
-These docs are for Mac admins deploying Setup Manager HUD with the Cloudflare
-Deploy Button or maintaining a deployed dashboard repository.
+# Setup Manager HUD — Documentation
 
 | Dark Mode | Light Mode |
 |-----------|------------|
 | ![Dark Mode](assets/setupmanagerhud-dark.png) | ![Light Mode](assets/setupmanagerhud-light.png) |
 
-| Task | Start here |
-|------|------------|
-| New deployment | [Getting Started](getting-started.md) |
-| Configure storage, secrets, or Worker bindings | [Configuration](configuration.md) |
-| Configure Setup Manager, webhook tokens, or dashboard protection | [Security](security.md) |
-| Hide test or demo enrollments from the Active dashboard | [Getting Started - Managing test enrollments](getting-started.md#7-manage-test-enrollments) |
-| Upgrade an existing dashboard | [Upgrading](upgrading.md) |
-| Fix webhook, D1, Durable Object, WebSocket, or Access errors | [Troubleshooting](troubleshooting.md) |
+## Where to start
 
-For the fastest setup path, start with the main [README](../README.md), then
-continue with [Getting Started](getting-started.md).
+| I want to… | Go here |
+|------------|---------|
+| Deploy for the first time | [Docker / container](deploy/container.md) · [Fly.io](deploy/fly.md) · [Cloudflare Workers](deploy/cloudflare.md) |
+| Understand configuration options | [Configuration reference](configuration.md) |
+| Fix something that's broken | [Troubleshooting](troubleshooting.md) |
+
+Start with the [main README](../README.md) if you haven't yet — it explains the deployment options and walks you through the Setup Manager plist configuration.
