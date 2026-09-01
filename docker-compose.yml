@@ -1,0 +1,14 @@
+services:
+  hud:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      WEBHOOK_TOKEN: "${WEBHOOK_TOKEN:?set WEBHOOK_TOKEN}"
+      APP_TITLE: "${APP_TITLE:-Setup Manager HUD}"
+      LOGO_URL: "${LOGO_URL:-}"
+      DB_PATH: "/data/hud.sqlite"
+    volumes:
+      - hud-data:/data
+volumes:
+  hud-data:
