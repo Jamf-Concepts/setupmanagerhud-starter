@@ -14,7 +14,9 @@ function readFilters(url: URL): EventFilters {
   const q = url.searchParams;
   const n = (k: string): number | undefined => {
     const v = q.get(k);
-    return v === null ? undefined : Number(v);
+    if (v === null) return undefined;
+    const num = Number(v);
+    return isNaN(num) ? undefined : num;
   };
   return {
     limit: n('limit'),
