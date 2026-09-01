@@ -12,6 +12,7 @@
     "deploy:cf": "wrangler d1 migrations apply DB --remote && wrangler deploy"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0",
     "better-sqlite3": "^11.3.0"
   },
